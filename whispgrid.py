@@ -2,17 +2,14 @@ import whisper_timestamped as whisper
 from whisper.tokenizer import get_tokenizer
 import tgt
 import json
-import tkinter as tk
-from tkinter import filedialog, StringVar, OptionMenu, messagebox, ttk, Entry, simpledialog
-from tkinter.simpledialog import askstring
-from tktooltip import ToolTip
 import sv_ttk
 import os
 import time
 
-import threading
 import datetime
 import subprocess
+
+import argparse
 
 import torch
 import pyannote.audio
@@ -21,9 +18,6 @@ from pyannote.audio import Audio
 from pyannote.core import Segment
 
 from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
-embedding_model = PretrainedSpeakerEmbedding(
-    "speechbrain/spkrec-ecapa-voxceleb",
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
 import wave
 import contextlib
@@ -31,53 +25,28 @@ import contextlib
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 
-predefined_models = ["base", "small", "medium", "large", "bofenghuang/whisper-medium-french"]
-predefined_languages = ["en", "fr", "es", "de"]
-num_speakers = 0 
-initials = []
+SPELL_OUT_NUMBERS = False
+WORD_TIER = False
 
+MODELS = ["large-v2", "base", "small", "medium", "large", "bofenghuang/whisper-medium-french"]
+LANGUAGES = ["en", "fr", "es", "de"]
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 st = time.process_time()
 
 
-def select_audio_files():
-    file_paths = filedialog.askopenfilenames(filetypes=[("Audio files", "*.wav;*.mp3;*.mp4;*.mpeg;*.mpga;*.m4a;*.webm;*.flac;*.ogg")])
-    for file_path in file_paths:
-        audio_listbox.insert(tk.END, file_path)
+embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb", device = device)
 
-def transcribe_audios():
+def transcribe_audios(args):
     start_time = time.time() 
-    selected_files = audio_listbox.get(0, tk.END)
-    selected_model = model_var.get()
-    selected_language = language_var.get()
-    num_speakers = speaker_entry.get()
+    selected_files = args.audio_files
+    selected_model = args.model
+    selected_language = args.language
+    num_speakers = args.speakers
 
-    # Check if num_speakers is empty or 0
-    if not num_speakers or int(num_speakers) == 0:
-        messagebox.showerror("Invalid Input", "Please enter a valid number of speakers.")
-        return
-
-    if selected_model == "other":
-        custom_model = askstring("Custom Model", "Enter a custom model name:")
-        if custom_model is None:
-            return
-        selected_model = custom_model
-
-    num_speakers = int(num_speakers)
-
-    if selected_language == "other":
-        custom_language = askstring("Custom Language", "Enter the language code:")
-        if selected_language is None:
-            return
-        selected_language = custom_language
-
+    initials = []
     for i in range(0, num_speakers):
-        initial = simpledialog.askstring("Speaker Name or Initials", f"Enter Name or Initials for Speaker {i + 1}:")
-        if initial is None:
-            return
-        initials.append(initial)
-
-
-    transcribe_button.config(state=tk.DISABLED)
+        initials.append(str(i))
 
     def format_time(seconds):
         # Convert seconds to hours, minutes, and seconds
@@ -85,38 +54,24 @@ def transcribe_audios():
         h, m = divmod(m, 60)
         return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
-    def on_transcription_completed():
-        end_time = time.time()
-        elapsed_time = end_time - start_time  # Calculate the elapsed time
-        formatted_time = format_time(elapsed_time)
-        et = time.process_time()
-        res = et - st
-        messagebox.showinfo("Transcription Complete", f"Batch transcription complete\nElapsed Time: {formatted_time} \nCPU execution time: {res} seconds")
-        audio_listbox.see(tk.END)
-        audio_listbox.delete(0, tk.END)
-        transcribe_button.config(state=tk.NORMAL)
-
-    transcription_threads = []
     for audio_path in selected_files:
-        transcription_thread = threading.Thread(target=transcribe_audio_thread, args=(audio_path, selected_model, on_transcription_completed, transcription_threads, selected_language, int(num_speakers), numspell_checkbox_var))
-        transcription_threads.append(transcription_thread)
-        transcription_thread.start()
+        transcribe_audio(audio_path, selected_model, selected_language, int(num_speakers))
 
-    def check_transcription_completion():
-        if all(not thread.is_alive() for thread in transcription_threads):
-            on_transcription_completed()
-        else:
-            app.after(1000, check_transcription_completion)
+    end_time = time.time()
+    elapsed_time = end_time - start_time  # Calculate the elapsed time
+    formatted_time = format_time(elapsed_time)
+    et = time.process_time()
+    res = et - st
+    print(f"Transcription Complete\nBatch transcription complete\nElapsed Time: {formatted_time} \nCPU execution time: {res} seconds")
 
-    check_transcription_completion()
 
-def transcribe_audio_thread(audio_path, selected_model, on_transcription_completed, transcription_threads, selected_language, num_speakers, numspell_checkbox_var):
+def transcribe_audio(audio_path, selected_model, selected_language, num_speakers):
     
     original_file_name, original_file_ext = os.path.splitext(os.path.basename(audio_path))
 
     audio = whisper.load_audio(audio_path)
     
-    if numspell_checkbox_var.get():
+    if SPELL_OUT_NUMBERS:
     
         tokenizer = get_tokenizer(multilingual=True)
         number_tokens = [
@@ -125,7 +80,7 @@ def transcribe_audio_thread(audio_path, selected_model, on_transcription_complet
             if all(c in "0123456789" for c in tokenizer.decode([i]).strip())
         ]
 
-        model = whisper.load_model(selected_model, device="cpu")
+        model = whisper.load_model(selected_model, device=device)
 
         result = whisper.transcribe(
             model,
@@ -140,7 +95,7 @@ def transcribe_audio_thread(audio_path, selected_model, on_transcription_complet
     
     else:
         
-        model = whisper.load_model(selected_model, device="cpu")
+        model = whisper.load_model(selected_model, device=device)
 
         result = whisper.transcribe(
             model,
@@ -157,19 +112,26 @@ def transcribe_audio_thread(audio_path, selected_model, on_transcription_complet
     previous_end_time = 0.0
 
 
-#Create TextGrid and edit it
+    #Create TextGrid and edit it
 
     tg = tgt.TextGrid()
 
     sentences_tier = tgt.IntervalTier(start_time=0, end_time=result["segments"][-1]["end"], name="phrase")
-    word_tier = tgt.IntervalTier(start_time=0, end_time=result["segments"][-1]["end"], name="mot")
 
-    #work on words before it's too late
-    for segment in result["segments"]:
-        if "words" in segment:
-            for word in segment["words"]:
-                interval = tgt.Interval(start_time=float(word["start"]), end_time=float(word["end"]), text=word["text"])
-                word_tier.add_interval(interval)
+    if WORD_TIER:
+        word_tier = tgt.IntervalTier(start_time=0, end_time=result["segments"][-1]["end"], name="mot")
+
+        #work on words before it's too late
+        for segment in result["segments"]:
+            if "words" in segment:
+                for word in segment["words"]:
+                    interval = tgt.Interval(start_time=float(word["start"]), end_time=float(word["end"]), text=word["text"])
+                    word_tier.add_interval(interval)
+
+        tg.add_tier(word_tier)
+
+
+    sentences_tier = tgt.IntervalTier(start_time=0, end_time=result["segments"][-1]["end"], name="phrase")
 
     if int(num_speakers) > 1:
 
@@ -222,7 +184,6 @@ def transcribe_audio_thread(audio_path, selected_model, on_transcription_complet
 
 
     tg.add_tier(sentences_tier)
-    tg.add_tier(word_tier)
 
     input_file_name = os.path.basename(audio_path)
     output_file_name = os.path.splitext(input_file_name)[0] + ".TextGrid"
@@ -230,64 +191,25 @@ def transcribe_audio_thread(audio_path, selected_model, on_transcription_complet
 
     tgt.write_to_file(tg, output_path, format='short')
 
-    if all(not thread.is_alive() for thread in transcription_threads):
-        on_transcription_completed()
-
-# App making
-
-app = tk.Tk()
-app.iconbitmap("audio-wave-32.ico")
-
-sv_ttk.set_theme("light")
-
-app.title("WhispGrid")
-
-audio_label = ttk.Label(app, text="Selected Audio Files")
-audio_label.pack()
-
-audio_listbox = tk.Listbox(app, selectmode=tk.MULTIPLE, width=100)
-audio_listbox.pack()
-
-select_button = ttk.Button(app, text="Select Audio Files", command=select_audio_files)
-select_button.pack()
-
-model_label = ttk.Label(app, text="Select or Enter a Model:")
-model_label.pack()
-ToolTip(model_label, msg="Open Ai Whisper Model or custom Model. Please note that diarization seems to work only with Whisper's models.")
 
 
-model_var = StringVar(app)
-model_var.set(predefined_models[0])
-model_option_menu = OptionMenu(app, model_var, *predefined_models, "other")
-model_option_menu.pack()
+def get_args():
+    parser = argparse.ArgumentParser()
 
-#language to use
+    parser.add_argument("--audio-files", type=str, nargs="+")
 
-language_label = ttk.Label(app, text="Select or Enter a Language:")
-language_label.pack()
-ToolTip(language_label, msg="Please use the initials of the language as defined in Whisper's API.")
+    parser.add_argument("--model", type=str, choices=MODELS, default=MODELS[0])
+    parser.add_argument("--language", type=str, choices=LANGUAGES, default=LANGUAGES[0])
 
+    parser.add_argument("--speakers", type=int, default=1)
 
-language_var = StringVar(app)
-language_var.set(predefined_languages[0])
-language_option_menu = OptionMenu(app, language_var, *predefined_languages, "other")
-language_option_menu.pack()
-
-#number of speakers
-
-speaker_label = ttk.Label(app, text="Enter the Number of Speakers:")
-speaker_label.pack()
-ToolTip(speaker_label, msg="You will then be asked for speakers' names. If there is only one speaker, no diarization will be performed.")
+    return parser.parse_args()
 
 
-speaker_entry = Entry(app)
-speaker_entry.pack()
+if __name__ == "__main__":
+    args = get_args()
+    print(args)
+    print(device)
+    transcribe_audios(args)
 
-numspell_checkbox_var = tk.BooleanVar()
-numspell_checkbox = ttk.Checkbutton(app, text="Spell out numbers", variable=numspell_checkbox_var)
-numspell_checkbox.pack()
 
-transcribe_button = ttk.Button(app, text="Transcribe", command=transcribe_audios)
-transcribe_button.pack()
-
-app.mainloop()
