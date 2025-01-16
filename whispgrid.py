@@ -24,6 +24,7 @@ import contextlib
 
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
+from tqdm import tqdm
 
 SPELL_OUT_NUMBERS = False
 WORD_TIER = False
