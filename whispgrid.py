@@ -39,9 +39,6 @@ embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb"
 
 def transcribe_audios(args):
     start_time = time.time() 
-    selected_files = args.audio_files
-    selected_model = args.model
-    selected_language = args.language
     num_speakers = args.speakers
 
     initials = []
@@ -54,8 +51,10 @@ def transcribe_audios(args):
         h, m = divmod(m, 60)
         return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
-    for audio_path in selected_files:
-        transcribe_audio(audio_path, selected_model, selected_language, int(num_speakers))
+    model = whisper.load_model(args.model, device=device)
+
+    for audio_path in tqdm(args.audio_files):
+        transcribe_audio(audio_path, model, args.language, int(num_speakers))
 
     end_time = time.time()
     elapsed_time = end_time - start_time  # Calculate the elapsed time
@@ -65,7 +64,7 @@ def transcribe_audios(args):
     print(f"Transcription Complete\nBatch transcription complete\nElapsed Time: {formatted_time} \nCPU execution time: {res} seconds")
 
 
-def transcribe_audio(audio_path, selected_model, selected_language, num_speakers):
+def transcribe_audio(audio_path, model, lang, num_speakers):
     
     original_file_name, original_file_ext = os.path.splitext(os.path.basename(audio_path))
 
@@ -80,12 +79,10 @@ def transcribe_audio(audio_path, selected_model, selected_language, num_speakers
             if all(c in "0123456789" for c in tokenizer.decode([i]).strip())
         ]
 
-        model = whisper.load_model(selected_model, device=device)
-
         result = whisper.transcribe(
             model,
             audio,
-            language=selected_language,
+            language=lang,
             beam_size=5,
             best_of=5,
             temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
@@ -95,12 +92,10 @@ def transcribe_audio(audio_path, selected_model, selected_language, num_speakers
     
     else:
         
-        model = whisper.load_model(selected_model, device=device)
-
         result = whisper.transcribe(
             model,
             audio,
-            language=selected_language,
+            language=lang,
             beam_size=5,
             best_of=5,
             temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
